@@ -35,8 +35,10 @@ type Transport interface {
 // appending a final step that wraps the provided Transport.
 func NewPipeline(opts ...PipelineOptions) (Pipeline, error) {
 
-	// Apply defaut
-	pipeline := Pipeline{}
+	// Apply default
+	pipeline := Pipeline{
+		tr: defaultTransport{},
+	}
 	var err error
 	for i := range opts {
 		err = opts[i](&pipeline)
@@ -70,4 +72,12 @@ func (p Pipeline) Execute(req *Request) (*http.Response, error) {
 	// Execute the fully composed pipeline.
 	return handler(req)
 
+}
+
+type defaultTransport struct {
+	client *http.Client
+}
+
+func (t defaultTransport) Send(req *http.Request) (*http.Response, error) {
+	return t.client.Do(req)
 }
