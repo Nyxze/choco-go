@@ -1,107 +1,170 @@
-# ChocoGo
+# 🐤 Choco-Go
 
-Choco-go is a Go library that implements an HTTP request/response middleware pipeline. It is designed to extend the Go standard library's `net/http` functionality by providing a flexible, composable policy pipeline for HTTP client operations.
-
----
-
-## Overview
-
-Choco-go’s middleware pipeline consists of three main components:
-
-- One or more **Policy** instances  
-- A **Transporter** instance  
-- A **Pipeline** instance that combines the Policies and the Transporter  
+A feather-light, composable middleware pipeline for taming HTTP requests in Go — inspired by our fastest, fluffiest and favorite bird, Clou.. wait, no — Chocobo, the trusty steed from the FF series.
 
 ---
 
-## Implementing the Policy Interface
+##  Overview
 
-A **Policy** encapsulates a step in the HTTP request lifecycle. Policies can be either:
-
-- **Stateless:** implemented as a first-class function  
-- **Stateful:** implemented as a method on a struct with internal state  
-
-Policies intercept requests and responses, allowing you to add features such as tracing, retries, logging, or mutation.
-
-> Note: HTTP requests passing through the same pipeline share the same Policy instances. If a Policy holds mutable state, it must be safe for concurrent use.
+**Choco-Go** lets you build a flexible and testable HTTP request pipeline in Go. Each unit of work, called a `PipelineStep`, can inspect, modify, or act on the request/response in a clean, functional style. The pipeline ends with a `Transport` that performs the actual HTTP request.
 
 ---
 
-## Implementing the Transporter Interface
+##  Configuring the Pipeline
 
-The **Transporter** is responsible for sending the HTTP request over the network and returning the response. It is always the last element in the pipeline.
+You configure a pipeline using a set of `PipelineOptions`, which are functional modifiers applied when constructing the pipeline.
 
-Transporters can be implemented as stateful or stateless, similar to Policies.
+### `WithCustomTransport`
 
-The default Transporter uses the Go standard library's `http.Client`.
-
----
-
-## Using Policy and Transporter Instances via a Pipeline
-
-Create a pipeline by passing a Transporter and one or more Policy instances to `NewPipeline`:
+Injects a custom `Transport` implementation into the pipeline. Useful for mocking, instrumentation, or altering the way requests are sent.
 
 ```go
-func NewPipeline(transport Transporter, policies ...Policy) Pipeline
+pipeline, err := NewPipeline(
+	WithCustomTransport(myTransport),
+)
 ```
 
-The pipeline executes the Policies in order, followed by the Transporter:
+If omitted, the pipeline defaults to using `http.DefaultClient`.
 
-```
-Request -> PolicyA -> PolicyB -> PolicyC -> Transporter -> HTTP Endpoint
-Response <- PolicyC <- PolicyB <- PolicyA <- Transporter
-```
+### `WithSteps`
 
-Example:
+Adds one or more `PipelineStep` instances to the request flow.
 
 ```go
-pipeline := NewPipeline(transport, policyA, policyB, policyC)
+pipeline, err := NewPipeline(
+	WithSteps(LoggingStep(), HeaderInjector("X-App", "choco")),
+)
 ```
 
-Send a request through the pipeline using `Pipeline.Do`:
+Steps are executed in the order they are added, and wrap each other like middleware.
+
+---
+
+##  Implementing the `Transport` Interface
+
+The `Transport` interface is the final rider in the request relay. It’s the component actually responsible for taking a fully-prepared `*http.Request`, sending it over the network, and returning the resulting `*http.Response` or an error.
 
 ```go
-req, err := NewRequest(ctx, "GET", "https://example.com")
-if err != nil {
-    // handle error
+type Transport interface {
+	Send(*http.Request) (*http.Response, error)
 }
+```
 
-resp, err := pipeline.Do(req)
-if err != nil {
-    // handle error
+This is the **last step** in the pipeline — the one that flaps its wings and takes off into the HTTP skies! 🐤
+
+While you can implement your own `Transport` (perhaps to mock network calls or use custom protocols), the typical implementation wraps a standard `http.Client`.
+
+---
+
+##  Request Flow
+
+When you call `Pipeline.Execute(*Request)`, the request passes through each step in sequence until it reaches the transport. Then the response bubbles back up the chain, giving each step a chance to inspect or mutate it.
+
+Here’s how it looks with `StepA`, `StepB`, `StepC`, and `TransportZ`:
+
+```go
+pipeline := NewPipeline(
+	WithSteps(StepA, StepB, StepC),
+	WithCustomTransport(TransportZ),
+)
+```
+
+**Request flow:**
+
+```
+Request  -> StepA -> StepB -> StepC -> TransportZ --------+
+                                                         |
+                                                      HTTP server
+                                                         |
+Response <- StepA <- StepB <- StepC <- http.Response <---+
+```
+
+Each step can:
+
+* Modify or enrich the outgoing request
+* Log, retry, or mutate the incoming response
+* Inject errors, headers, context, metrics, or just plain chaos (responsibly, please)
+
+---
+
+##  Implementing a `PipelineStep`
+
+A `PipelineStep` can be implemented in two ways:
+
+* **As a function** using `PipelineStepFunc` for *stateless* behavior.
+* **As a struct** with a `Do(next)` method for *stateful* behavior.
+
+Note: all requests sent through the same `Pipeline` share the same `PipelineStep` instances. If a step mutates internal state, it **must be thread-safe** to avoid data races in concurrent environments.
+
+---
+
+##  How Steps Work
+
+When a request is executed, the pipeline builds a chain of handlers by wrapping a `Transport` in multiple `PipelineStep`s. Each step has full control over:
+
+* The incoming `*Request`
+* The execution of the next step
+* The final `*http.Response` and `error` returned to the caller
+
+Each step can:
+
+* Inspect or mutate the request
+* Call the `next` step
+* Inspect or modify the response
+* Handle errors
+
+---
+
+##  Example Use Cases
+
+* **Stateless:**
+
+  * Inject headers
+  * Rewrite query parameters
+  * Log metadata
+
+* **Stateful:**
+
+  * Track retry counts
+  * Manage authentication tokens
+  * Cache results
+  * Enforce rate limits
+
+---
+
+##  Example: Logging Step
+
+```go
+func LoggingStep() PipelineStep {
+	return PipelineStepFunc(func(next RequestHandlerFunc) RequestHandlerFunc {
+		return func(r *Request) (*http.Response, error) {
+			fmt.Println("Before request")
+			resp, err := next(r)
+			fmt.Println("After request")
+			return resp, err
+		}
+	})
 }
-
-// use resp...
 ```
 
 ---
 
-## Creating a Request Instance
-
-A `Request` wraps an `*http.Request` with extra internal state and helper methods.
-
-Create a new request via:
+##  Example: Header Injection
 
 ```go
-func NewRequest(ctx context.Context, method string, url string) (*Request, error)
+func HeaderInjector(key, value string) PipelineStep {
+	return PipelineStepFunc(func(next RequestHandlerFunc) RequestHandlerFunc {
+		return func(r *Request) (*http.Response, error) {
+			r.req.Header.Set(key, value)
+			return next(r)
+		}
+	})
+}
 ```
-
-If the request has a body, set it using:
-
-```go
-func (r *Request) SetBody(body io.ReadSeekCloser, contentType string) error
-```
-
-`io.ReadSeekCloser` is required to support retries, allowing the body stream to be rewound.
-
 ---
 
-## Built-in Policies
+##  TODO
 
-Choco-go includes several built-in policies such as:
-
-* **TracingPolicy:** adds tracing and diagnostics to requests
-* **RetryPolicy:** automatically retries transient failures
-* **LoggingPolicy:** logs requests and responses
-
----
+* Built-in steps: retry, timeout, tracing
+* Context-aware execution
+* Enhanced request/response mutation helpers
