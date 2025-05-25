@@ -1,8 +1,8 @@
 package choco
 
-// PipelineOptions defines a function that can modify or configure a Pipeline instance.
-// These are used with NewPipeline to apply options in a composable way.
-type PipelineOptions func(*Pipeline) error
+// PipelineOption defines a functional option for configuring a Pipeline.
+// These options are applied in order during Pipeline construction via NewPipeline.
+type PipelineOption func(*Pipeline) error
 
 // WithCustomTransport sets the transport responsible for executing the final HTTP request.
 //
@@ -23,9 +23,9 @@ type PipelineOptions func(*Pipeline) error
 //
 // Returns:
 //   - A PipelineOptions function to be used with NewPipeline.
-func WithCustomTransport(tr Transport) PipelineOptions {
+func WithCustomTransport(tr Transport) PipelineOption {
 	return func(p *Pipeline) error {
-		p.tr = tr
+		p.transport = tr
 		return nil
 	}
 }
@@ -50,7 +50,7 @@ func WithCustomTransport(tr Transport) PipelineOptions {
 //
 // Returns:
 //   - A PipelineOptions function to be used with NewPipeline.
-func WithSteps(steps ...PipelineStep) PipelineOptions {
+func WithSteps(steps ...PipelineStep) PipelineOption {
 	return func(p *Pipeline) error {
 		p.steps = append(p.steps, steps...)
 		return nil

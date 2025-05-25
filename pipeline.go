@@ -4,40 +4,46 @@ import (
 	"net/http"
 )
 
-// Pipeline defines a chain of PipelineSteps that process the request
-// in sequence and ultimately produce an HTTP response.
+// [Pipeline] defines a chain of [PipelineStep]s that process a [Request]
+// in sequence and ultimately produce an [http.Response].
 type Pipeline struct {
-	steps []PipelineStep
-	tr    Transport
+	steps     []PipelineStep
+	transport Transport
 }
 
-// PipelineStep represents a single unit of work in the pipeline.
-// It wraps a RequestHandlerFunc and returns a new one.
+// [PipelineStep] represents a single unit of work in a [Pipeline].
+// Each step can either handle the [Request] directly or delegate to the [next] [RequestHandlerFunc].
+//
+// It must return either a non-nil [http.Response] or an [error].
+// Failing to do so (e.g. by forgetting to call [next] and returning nil values)
+// will cause pipeline execution to fail.
 type PipelineStep interface {
-	Do(RequestHandlerFunc) RequestHandlerFunc
+	Do(req *Request, next RequestHandlerFunc) (*http.Response, error)
 }
 
-// PipelineStepFunc is a function adapter to allow the use of
-// ordinary functions as PipelineSteps.
-type PipelineStepFunc func(next RequestHandlerFunc) RequestHandlerFunc
+// [PipelineStepFunc] is a function adapter that allows a plain function to satisfy
+// the [PipelineStep] interface.
+type PipelineStepFunc func(req *Request, next RequestHandlerFunc) (*http.Response, error)
 
-// Do makes PipelineStepFunc satisfy the PipelineStep interface.
-func (f PipelineStepFunc) Do(next RequestHandlerFunc) RequestHandlerFunc {
-	return f(next)
+// Do makes [PipelineStepFunc] implement the [PipelineStep] interface.
+func (f PipelineStepFunc) Do(req *Request, next RequestHandlerFunc) (*http.Response, error) {
+	return f(req, next)
 }
 
-// Transport is the final component responsible for executing the actual HTTP request.
+// [Transport] is the final component in the [Pipeline] responsible for
+// executing the actual [http.Request] and returning an [http.Response].
 type Transport interface {
 	Send(*http.Request) (*http.Response, error)
 }
 
-// NewPipeline creates a new Pipeline from the given steps,
-// appending a final step that wraps the provided Transport.
-func NewPipeline(opts ...PipelineOptions) (Pipeline, error) {
-
-	// Apply default
+// NewPipeline creates a new [Pipeline] by applying the provided [PipelineOptions].
+// Default options are applied first, followed by overrides from [opts].
+// Returns an error if any [PipelineOption] fail to apply.
+func NewPipeline(opts ...PipelineOption) (Pipeline, error) {
 	pipeline := Pipeline{
-		tr: defaultTransport{},
+		transport: defaultTransport{
+			client: http.DefaultClient,
+		},
 	}
 	var err error
 	for i := range opts {
@@ -49,29 +55,40 @@ func NewPipeline(opts ...PipelineOptions) (Pipeline, error) {
 	return pipeline, nil
 }
 
-// Execute runs the pipeline, passing the request through all steps.
+// Execute runs the [Pipeline], passing the [Request] through all registered [PipelineStep]s.
+// Each step may inspect, modify, short-circuit, or pass the request to the next step.
+// If no step calls [next], the pipeline will not proceed and an error will be returned.
 func (p Pipeline) Execute(req *Request) (*http.Response, error) {
 	if req == nil {
 		return nil, NewError("request is nil")
 	}
 
-	if p.tr == nil {
+	if p.transport == nil {
 		return nil, NewError("pipeline transport is not set")
 	}
 
-	// Start with the transport as the terminal handler in the pipeline.
 	handler := func(r *Request) (*http.Response, error) {
-		return p.tr.Send(r.Raw())
+		return p.transport.Send(r.Raw())
 	}
 
-	// Wrap the handler with each step, from last to first.
 	for i := len(p.steps) - 1; i >= 0; i-- {
-		handler = p.steps[i].Do(handler)
+		handler = wrapStep(p.steps[i], handler)
 	}
 
-	// Execute the fully composed pipeline.
 	return handler(req)
+}
 
+// wrapStep composes a [PipelineStep] around a [RequestHandlerFunc].
+// If the step fails to return a valid response or error (e.g. does not call [next]),
+// the pipeline will fail with an appropriate error.
+func wrapStep(step PipelineStep, next RequestHandlerFunc) RequestHandlerFunc {
+	return func(r *Request) (*http.Response, error) {
+		resp, err := step.Do(r, next)
+		if resp == nil && err == nil {
+			return nil, NewError("pipeline step did not call next and did not return a response or error")
+		}
+		return resp, err
+	}
 }
 
 type defaultTransport struct {

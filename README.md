@@ -4,72 +4,72 @@ A feather-light, composable middleware pipeline for taming HTTP requests in Go �
 
 ---
 
-##  Overview
+## Overview
 
-**Choco-Go** lets you build a flexible and testable HTTP request pipeline in Go. Each unit of work, called a `PipelineStep`, can inspect, modify, or act on the request/response in a clean, functional style. The pipeline ends with a `Transport` that performs the actual HTTP request.
+**Choco-Go** provides a flexible, testable way to construct HTTP request pipelines. Each unit of work, called a `PipelineStep`, can inspect, modify, or act on requests/responses in a clean, functional style. The pipeline ends with a `Transport` that executes the actual HTTP request.
 
 ---
 
-##  Configuring the Pipeline
+## Configuring the `Pipeline`
 
-You configure a pipeline using a set of `PipelineOptions`, which are functional modifiers applied when constructing the pipeline.
+Pipelines are configured with `PipelineOptions` — functional modifiers applied when constructing the pipeline.
 
 ### `WithCustomTransport`
 
-Injects a custom `Transport` implementation into the pipeline. Useful for mocking, instrumentation, or altering the way requests are sent.
+Injects a custom `Transport` implementation into the pipeline. Useful for mocking, instrumentation, or altering how requests are sent.
 
 ```go
 pipeline, err := NewPipeline(
-	WithCustomTransport(myTransport),
+    WithCustomTransport(myTransport),
 )
 ```
 
-If omitted, the pipeline defaults to using `http.DefaultClient`.
+If omitted, the pipeline defaults to `http.DefaultClient`.
 
 ### `WithSteps`
 
-Adds one or more `PipelineStep` instances to the request flow.
+Adds one or more `PipelineStep`s to the request flow.
 
 ```go
 pipeline, err := NewPipeline(
-	WithSteps(LoggingStep(), HeaderInjector("X-App", "choco")),
+    WithSteps(LoggingStep(), HeaderInjector("X-App", "choco")),
 )
 ```
 
-Steps are executed in the order they are added, and wrap each other like middleware.
+Steps are executed in the order added and wrap each other like middleware.
 
 ---
 
-##  Implementing the `Transport` Interface
+## Implementing the `Transport` Interface
 
-The `Transport` interface is the final rider in the request relay. It’s the component actually responsible for taking a fully-prepared `*http.Request`, sending it over the network, and returning the resulting `*http.Response` or an error.
+The `Transport` is the final rider in the relay. It’s the component responsible for executing the fully-formed `*http.Request` and returning a `*http.Response` or an error.
 
 ```go
 type Transport interface {
-	Send(*http.Request) (*http.Response, error)
+    Send(*http.Request) (*http.Response, error)
 }
 ```
 
 This is the **last step** in the pipeline — the one that flaps its wings and takes off into the HTTP skies! 🐤
 
-While you can implement your own `Transport` (perhaps to mock network calls or use custom protocols), the typical implementation wraps a standard `http.Client`.
+While you can implement your own `Transport` (e.g. for mocking or using custom protocols), the default implementation wraps a standard `http.Client`.
 
 ---
 
-##  Request Flow
+## Request Flow
 
-When you call `Pipeline.Execute(*Request)`, the request passes through each step in sequence until it reaches the transport. Then the response bubbles back up the chain, giving each step a chance to inspect or mutate it.
+Calling `pipeline.Execute(*Request)` processes the request through each step and finally the transport. The response then bubbles back through each step in reverse order.
 
-Here’s how it looks with `StepA`, `StepB`, `StepC`, and `TransportZ`:
+Example setup:
 
 ```go
-pipeline := NewPipeline(
-	WithSteps(StepA, StepB, StepC),
-	WithCustomTransport(TransportZ),
+pipeline, err := NewPipeline(
+    WithSteps(StepA, StepB, StepC),
+    WithCustomTransport(TransportZ),
 )
 ```
 
-**Request flow:**
+**Flow:**
 
 ```
 Request  -> StepA -> StepB -> StepC -> TransportZ --------+
@@ -81,90 +81,94 @@ Response <- StepA <- StepB <- StepC <- http.Response <---+
 
 Each step can:
 
-* Modify or enrich the outgoing request
-* Log, retry, or mutate the incoming response
-* Inject errors, headers, context, metrics, or just plain chaos (responsibly, please)
+* Enrich or rewrite the outgoing request
+* Handle errors or retries
+* Modify the response or inject metadata
+* Collect metrics or tracing info
 
 ---
 
-##  Implementing a `PipelineStep`
+## Implementing a `PipelineStep`
 
-A `PipelineStep` can be implemented in two ways:
+A `PipelineStep` is any component that implements:
 
-* **As a function** using `PipelineStepFunc` for *stateless* behavior.
-* **As a struct** with a `Do(next)` method for *stateful* behavior.
+```go
+type PipelineStep interface {
+    Do(req *Request, next RequestHandlerFunc) (*http.Response, error)
+}
+```
 
-Note: all requests sent through the same `Pipeline` share the same `PipelineStep` instances. If a step mutates internal state, it **must be thread-safe** to avoid data races in concurrent environments.
+You can implement it:
 
----
+* **As a function**, using `PipelineStepFunc` for stateless behavior
+* **As a struct**, for steps that require internal state
 
-##  How Steps Work
-
-When a request is executed, the pipeline builds a chain of handlers by wrapping a `Transport` in multiple `PipelineStep`s. Each step has full control over:
-
-* The incoming `*Request`
-* The execution of the next step
-* The final `*http.Response` and `error` returned to the caller
-
-Each step can:
-
-* Inspect or mutate the request
-* Call the `next` step
-* Inspect or modify the response
-* Handle errors
+> 🔒 Note: Steps are shared across all executions of a pipeline. If you use internal state, ensure it is **thread-safe**.
 
 ---
 
-##  Example Use Cases
+## How Steps Work
 
-* **Stateless:**
+When executing a request, the pipeline builds a handler chain where each step wraps the next. Each step can:
 
-  * Inject headers
-  * Rewrite query parameters
-  * Log metadata
+* Inspect or mutate the `*Request`
+* Call the `next` handler (to continue execution)
+* Modify or inspect the `*http.Response`
+* Return early (e.g., for error injection or short-circuiting)
 
-* **Stateful:**
-
-  * Track retry counts
-  * Manage authentication tokens
-  * Cache results
-  * Enforce rate limits
+⚠️ If a step forgets to call `next`, and doesn't return a response or error, the pipeline will fail.
 
 ---
 
-##  Example: Logging Step
+## Example Use Cases
+
+**Stateless:**
+
+* Inject headers
+* Rewrite query parameters
+* Log requests/responses
+
+**Stateful:**
+
+* Track retry counts
+* Refresh access tokens
+* Enforce rate limits
+* Maintain a cache
+
+---
+
+## Example: Logging Step
 
 ```go
 func LoggingStep() PipelineStep {
-	return PipelineStepFunc(func(next RequestHandlerFunc) RequestHandlerFunc {
-		return func(r *Request) (*http.Response, error) {
-			fmt.Println("Before request")
-			resp, err := next(r)
-			fmt.Println("After request")
-			return resp, err
-		}
-	})
+    return PipelineStepFunc(func(req *Request, next RequestHandlerFunc) (*http.Response, error) {
+        fmt.Println("Before request")
+        resp, err := next(req)
+        fmt.Println("After request")
+        return resp, err
+    })
 }
 ```
 
 ---
 
-##  Example: Header Injection
+## Example: Header Injection
 
 ```go
 func HeaderInjector(key, value string) PipelineStep {
-	return PipelineStepFunc(func(next RequestHandlerFunc) RequestHandlerFunc {
-		return func(r *Request) (*http.Response, error) {
-			r.req.Header.Set(key, value)
-			return next(r)
-		}
-	})
+    return PipelineStepFunc(func(req *Request, next RequestHandlerFunc) (*http.Response, error) {
+        req.req.Header.Set(key, value)
+        return next(req)
+    })
 }
 ```
+
 ---
 
-##  TODO
+## TODO
 
-* Built-in steps: retry, timeout, tracing
-* Context-aware execution
-* Enhanced request/response mutation helpers
+* [ ] Built-in steps: retry, timeout, tracing
+* [ ] Context-aware execution
+* [ ] Enhanced request/response mutation utilities
+
+---

@@ -117,23 +117,19 @@ func equalStringSlice(a, b []string) bool {
 
 // Steps
 func removeHeaders() PipelineStep {
-	return PipelineStepFunc(func(next RequestHandlerFunc) RequestHandlerFunc {
-		return func(r *Request) (*http.Response, error) {
-			r.Raw().Header.Set("Ping", "")
-			resp, err := next(r)
-			if resp != nil {
-				resp.Header.Del("Ping")
-			}
-			return resp, err
+	return PipelineStepFunc(func(req *Request, next RequestHandlerFunc) (*http.Response, error) {
+		req.Raw().Header.Set("Ping", "")
+		resp, err := next(req)
+		if resp != nil {
+			resp.Header.Del("Ping")
 		}
+		return resp, err
 	})
 }
 
 func errorStep() PipelineStep {
-	return PipelineStepFunc(func(next RequestHandlerFunc) RequestHandlerFunc {
-		return func(r *Request) (*http.Response, error) {
-			return nil, fmt.Errorf("injected error")
-		}
+	return PipelineStepFunc(func(req *Request, next RequestHandlerFunc) (*http.Response, error) {
+		return nil, fmt.Errorf("injected error")
 	})
 }
 
@@ -141,13 +137,11 @@ type statefullStep struct {
 	logs []string
 }
 
-func (s *statefullStep) Do(next RequestHandlerFunc) RequestHandlerFunc {
-	return func(r *Request) (*http.Response, error) {
-		s.logs = append(s.logs, "stateful-before")
-		resp, err := next(r)
-		if err == nil {
-			s.logs = append(s.logs, "stateful-after")
-		}
-		return resp, err
+func (s *statefullStep) Do(req *Request, next RequestHandlerFunc) (*http.Response, error) {
+	s.logs = append(s.logs, "stateful-before")
+	resp, err := next(req)
+	if err == nil {
+		s.logs = append(s.logs, "stateful-after")
 	}
+	return resp, err
 }
