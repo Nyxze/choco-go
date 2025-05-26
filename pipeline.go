@@ -1,6 +1,7 @@
 package choco
 
 import (
+	"fmt"
 	"net/http"
 )
 
@@ -60,22 +61,30 @@ func NewPipeline(opts ...PipelineOption) (Pipeline, error) {
 // If no step calls [next], the pipeline will not proceed and an error will be returned.
 func (p Pipeline) Execute(req *Request) (*http.Response, error) {
 	if req == nil {
-		return nil, NewError("request is nil")
+		return nil, NewError("request is nil ")
 	}
 
 	if p.transport == nil {
 		return nil, NewError("pipeline transport is not set")
 	}
-
-	handler := func(r *Request) (*http.Response, error) {
-		return p.transport.Send(r.Raw())
-	}
+	handler := p.sendRequest
 
 	for i := len(p.steps) - 1; i >= 0; i-- {
 		handler = wrapStep(p.steps[i], handler)
 	}
 
 	return handler(req)
+}
+
+func (p Pipeline) sendRequest(cReq *Request) (*http.Response, error) {
+	req := cReq.Raw()
+	if req.URL.Host == "" {
+		return nil, NewError("no Host in request URL")
+	}
+	if !(req.URL.Scheme == "http" || req.URL.Scheme == "https") {
+		return nil, fmt.Errorf("unsupported protocol scheme %s", req.URL.Scheme)
+	}
+	return p.transport.Send(req)
 }
 
 // wrapStep composes a [PipelineStep] around a [RequestHandlerFunc].
