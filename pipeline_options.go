@@ -56,3 +56,35 @@ func WithSteps(steps ...PipelineStep) PipelineOption {
 		return nil
 	}
 }
+
+// WithStepFuncs appends one or more [PipelineStepFunc] functions to the pipeline.
+//
+// This function is a convenience wrapper that allows you to pass plain functions
+// instead of requiring full [PipelineStep] implementations. Each provided function will
+// be automatically wrapped to satisfy the [PipelineStep] interface.
+//
+// Example:
+//
+//	pipeline, err := NewPipeline(
+//	    WithStepFuncs(func(req *Request, next RequestHandlerFunc) (*http.Response, error) {
+//	        // Custom behavior before or after the next step
+//	        resp, err := next(req)
+//	        return resp, err
+//	    }),
+//	)
+//
+// Step functions are applied in the order passed, and executed in a nested fashion
+// around the request/response cycle.
+//
+// Parameters:
+//   - funcs: One or more [PipelineStepFunc] functions to include in the pipeline.
+//
+// Returns:
+//   - A [PipelineOption] function to be used with [NewPipeline].
+func WithStepFuncs(funcs ...PipelineStepFunc) PipelineOption {
+	steps := make([]PipelineStep, len(funcs))
+	for i, s := range funcs {
+		steps[i] = s
+	}
+	return WithSteps(steps...)
+}
