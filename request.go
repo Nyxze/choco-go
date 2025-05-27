@@ -2,9 +2,9 @@ package choco
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
+	"net/http/httputil"
 )
 
 // Request wraps the standard http.Request.
@@ -19,6 +19,15 @@ type Request struct {
 // RequestHandlerFunc defines a function that processes a *Request
 // and returns an HTTP response or error.
 type RequestHandlerFunc func(*Request) (*http.Response, error)
+
+// Create a new request with a given method & endpoint (e.g: GET /api/v1/users)
+func NewRequest(ctx context.Context, httpMethod string, endpoint string) (*Request, error) {
+	req, err := http.NewRequestWithContext(ctx, httpMethod, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	return &Request{req: req}, nil
+}
 
 // Return body associated to the request
 func (r *Request) Body() io.ReadSeekCloser {
@@ -52,7 +61,7 @@ func (r *Request) SetBody(body io.ReadSeekCloser, contentType string) error {
 	}
 	if size == 0 {
 		body = nil
-		raw.Header.Del(HeaderContentLength)
+		r.DelHeader(HeaderContentLength)
 	} else {
 		// Rewind to start
 		_, err = body.Seek(0, io.SeekStart)
@@ -69,23 +78,20 @@ func (r *Request) SetBody(body io.ReadSeekCloser, contentType string) error {
 	raw.ContentLength = size
 
 	if contentType == "" {
-		r.Raw().Header.Del(HeaderContentType)
+		r.DelHeader(HeaderContentType)
 	} else {
-		raw.Header.Set(HeaderContentType, contentType)
+		r.SetContentType(contentType)
 	}
 	r.body = body
 	return nil
 }
 
-func NewRequest(ctx context.Context, httpMethod string, endpoint string) (*Request, error) {
-	req, err := http.NewRequestWithContext(ctx, httpMethod, endpoint, nil)
-	if err != nil {
-		return nil, err
+func (r *Request) DumpRequest(body bool) ([]byte, error) {
+	if r.req == nil {
+		return nil, NewError("request: missing inner *http.Request")
 	}
-	return &Request{req: req}, nil
-}
-
-func NewError(message string, args ...any) error {
-	msg := fmt.Sprintf("[choco]:%s", message)
-	return fmt.Errorf(msg, args)
+	if r.req.GetBody != nil {
+		r.req.Body, _ = r.req.GetBody()
+	}
+	return httputil.DumpRequestOut(r.req, body)
 }
