@@ -38,3 +38,14 @@ func Range[T any](ctx context.Context, i Iterator[T]) iter.Seq[T] {
 		}
 	}
 }
+
+func Select[T any, V any](seq iter.Seq[T], apply func(T) V) iter.Seq[V] {
+	return func(yield func(V) bool) {
+		for item := range seq {
+			value := apply(item)
+			if !yield(value) {
+				return
+			}
+		}
+	}
+}
