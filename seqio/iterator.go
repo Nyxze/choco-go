@@ -1,6 +1,9 @@
 package seqio
 
-import "bufio"
+import (
+	"bufio"
+	"io"
+)
 
 // Iterator is a generic interface for forward-only iteration over values of type T.
 // It is typically used to consume streamed or decoded data one item at a time.
@@ -19,6 +22,13 @@ type Iterator[T any] interface {
 	// It should be called after Next returns false to determine whether the
 	// iterator completed normally or due to an error.
 	Err() error
+}
+
+func NewLineIter(r io.ReadCloser) Iterator[string] {
+	s := bufio.NewScanner(r)
+	return &lineIter{
+		scanner: s,
+	}
 }
 
 // lineIter is an Iterator implementation that yields lines of text
